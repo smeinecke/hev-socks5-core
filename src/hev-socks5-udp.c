@@ -36,6 +36,7 @@ struct _HevSocks5UDPSplice
 {
     HevSocks5UDP *udp;
     HevSocks5UDPAlive alive;
+    int bind;
     int fd;
 };
 
@@ -82,8 +83,6 @@ hev_socks5_udp_sendto (HevSocks5UDP *self, const void *buf, size_t len,
     memset (&mh, 0, sizeof (mh));
     mh.msg_iov = iov;
     mh.msg_iovlen = 2;
-    mh.msg_name = HEV_SOCKS5 (self)->data;
-    mh.msg_namelen = sizeof (struct sockaddr_in6);
 
     iov[0].iov_base = &udp;
     iov[0].iov_len = 3 + addrlen;
@@ -157,20 +156,26 @@ hev_socks5_udp_recvfrom_udp (HevSocks5UDP *self, void *buf, size_t len,
     uint8_t rbuf[1500];
     socklen_t alen;
     ssize_t rlen;
-    void *adat;
     int doff;
     int res;
+    int fd;
 
     LOG_D ("%p socks5 udp recvfrom udp", self);
 
-    adat = HEV_SOCKS5 (self)->data;
+    fd = hev_socks5_udp_get_fd (self);
     alen = sizeof (struct sockaddr_in6);
-    rlen = hev_task_io_socket_recvfrom (hev_socks5_udp_get_fd (self), rbuf,
-                                        sizeof (rbuf), 0, adat, &alen,
+    rlen = hev_task_io_socket_recvfrom (fd, rbuf, sizeof (rbuf), 0, addr, &alen,
                                         task_io_yielder, self);
     if (rlen < 4) {
         LOG_D ("%p socks5 udp read", self);
         return rlen;
+    }
+
+    if (!HEV_SOCKS5 (self)->udp_associated) {
+        res = connect (fd, addr, alen);
+        if (res < 0)
+            return -1;
+        HEV_SOCKS5 (self)->udp_associated = 1;
     }
 
     udp = (HevSocks5UDPHdr *)rbuf;
@@ -245,6 +250,16 @@ hev_socks5_udp_fwd_f (HevSocks5UDP *self, HevSocks5UDPSplice *splice)
         }
         LOG_D ("%p socks5 udp fwd f recv", self);
         return -1;
+    }
+
+    if (!splice->bind) {
+        HevSocks5Class *skptr = HEV_OBJECT_GET_CLASS (self);
+        int res = skptr->binder (HEV_SOCKS5 (self), splice->fd, saddr);
+        if (res < 0) {
+            LOG_E ("%p socks5 udp bind", self);
+            return -1;
+        }
+        splice->bind = 1;
     }
 
     res = sendto (splice->fd, buf, res, 0, saddr, sizeof (addr));
@@ -339,6 +354,7 @@ hev_socks5_udp_splicer (HevSocks5UDP *self, int fd)
 
     splice.udp = self;
     splice.alive = HEV_SOCKS5_UDP_ALIVE_F | HEV_SOCKS5_UDP_ALIVE_B;
+    splice.bind = 0;
     splice.fd = fd;
 
     if (hev_task_add_fd (task, fd, POLLIN) < 0)

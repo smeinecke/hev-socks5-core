@@ -51,6 +51,7 @@ struct _HevSocks5
 
     int fd;
     int timeout;
+    int udp_associated;
     HevSocks5Type type;
     HevSocks5DomainAddrType domain_addr_type;
     HevSocks5Version version;
