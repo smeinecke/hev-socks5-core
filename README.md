@@ -102,7 +102,7 @@ tcp_client_entry (void *data)
 {
     HevSocks5ClientTCP *tcp;
 
-    tcp = hev_socks5_client_tcp_new ("www.google.com", 443);
+    tcp = hev_socks5_client_tcp_new_name ("www.google.com", 443);
     hev_socks5_client_connect (HEV_SOCKS5_CLIENT (tcp), "127.0.0.1", 1080);
     hev_socks5_client_handshake (HEV_SOCKS5_CLIENT (tcp));
 
@@ -124,16 +124,13 @@ udp_client_entry (void *data)
     hev_socks5_client_handshake (HEV_SOCKS5_CLIENT (udp));
 
     /*
+     * HevSocks5Addr addr;
+     *
      * send udp packet:
-     *     hev_socks5_udp_sendto (HEV_SOCKS5_UDP (udp), data, len, addr);
+     *     hev_socks5_udp_sendto (HEV_SOCKS5_UDP (udp), data, len, &addr);
      *
-     * recv udp packet: (with source address family AF_INET6)
-     *     addr.sa_family = AF_INET6;
-     *     hev_socks5_udp_recvfrom (HEV_SOCKS5_UDP (udp), data, len, addr);
-     *
-     * recv udp packet: (with source address family AF_INET for IPv4 only)
-     *     addr.sa_family = AF_INET;
-     *     hev_socks5_udp_recvfrom (HEV_SOCKS5_UDP (udp), data, len, addr);
+     * recv udp packet:
+     *     hev_socks5_udp_recvfrom (HEV_SOCKS5_UDP (udp), data, len, &addr);
      */
 
     hev_object_unref (HEV_OBJECT (udp));
@@ -159,6 +156,39 @@ main (int argc, char *argv[])
     return 0;
 }
 ```
+
+## UDP in TCP
+
+UDP-in-TCP mode is a proprietary extension based on RFC 1928, designed to
+forward UDP packets within the primary SOCKS5 TCP stream. The protocol is
+defined as follows:
+
+### SOCKS5 Requests
+
+```
+    +----+-----+-------+------+----------+----------+
+    |VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
+    +----+-----+-------+------+----------+----------+
+    | 1  |  1  | X'00' |  1   | Variable |    2     |
+    +----+-----+-------+------+----------+----------+
+```
+
+* CMD
+    * UDP IN TCP: X'05'
+
+### UDP Relays
+
+```
+    +--------+--------+------+----------+----------+----------+
+    | MSGLEN | HDRLEN | ATYP | DST.ADDR | DST.PORT |   DATA   |
+    +--------+--------+------+----------+----------+----------+
+    |   2    |   1    |  1   | Variable |    2     | Variable |
+    +--------+--------+------+----------+----------+----------+
+```
+
+- MSGLEN: The total length of the UDP relay message. `[MSGLEN, DATA]`
+- HDRLEN: The header length of the UDP relay message. `[MSGLEN, DST.PORT]`
+- ATYPE/DST.ADDR/DST.PORT: Fields follow the definitions specified in RFC 1928.
 
 ## Users
 

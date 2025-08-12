@@ -34,16 +34,16 @@ hev_socks5_set_timeout (HevSocks5 *self, int timeout)
     self->timeout = timeout;
 }
 
-HevSocks5DomainAddrType
-hev_socks5_get_domain_addr_type (HevSocks5 *self)
+HevSocks5AddrFamily
+hev_socks5_get_addr_family (HevSocks5 *self)
 {
-    return self->domain_addr_type;
+    return self->addr_family;
 }
 
 void
-hev_socks5_set_domain_addr_type (HevSocks5 *self, HevSocks5DomainAddrType type)
+hev_socks5_set_addr_family (HevSocks5 *self, HevSocks5AddrFamily family)
 {
-    self->domain_addr_type = type;
+    self->addr_family = family;
 }
 
 static int
@@ -68,6 +68,7 @@ hev_socks5_construct (HevSocks5 *self, HevSocks5Type type)
     self->fd = -1;
     self->timeout = -1;
     self->type = type;
+    self->addr_family = HEV_SOCKS5_ADDR_FAMILY_UNSPEC;
     self->domain_addr_type = HEV_SOCKS5_DOMAIN_ADDR_TYPE_UNSPEC;
     self->version = HEV_SOCKS5_VERSION_5;
 
@@ -81,8 +82,10 @@ hev_socks5_destruct (HevObject *base)
 
     LOG_D ("%p socks5 destruct", self);
 
-    if (self->fd >= 0)
+    if (self->fd >= 0) {
+        hev_task_del_fd (hev_task_self (), self->fd);
         close (self->fd);
+    }
 
     HEV_OBJECT_TYPE->destruct (base);
     hev_free (base);

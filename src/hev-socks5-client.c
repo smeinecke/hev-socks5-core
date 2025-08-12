@@ -2,7 +2,7 @@
  ============================================================================
  Name        : hev-socks5-client.c
  Author      : Heiher <r@hev.cc>
- Copyright   : Copyright (c) 2021 - 2024 hev
+ Copyright   : Copyright (c) 2021 - 2025 hev
  Description : Socks5 Client
  ============================================================================
  */
@@ -29,13 +29,13 @@ hev_socks5_client_connect_server (HevSocks5Client *self, const char *addr,
     HevSocks5Class *klass;
     struct sockaddr_in6 saddr;
     struct sockaddr *sap;
-    int addr_type;
+    int addr_family;
     int fd, res;
 
     LOG_D ("%p socks5 client connect server", self);
 
-    addr_type = hev_socks5_get_domain_addr_type (HEV_SOCKS5 (self));
-    res = hev_socks5_resolve_to_sockaddr6 (addr, port, addr_type, &saddr);
+    addr_family = hev_socks5_get_addr_family (HEV_SOCKS5 (self));
+    res = hev_socks5_name_into_sockaddr6 (addr, port, &saddr, &addr_family);
     if (res < 0) {
         LOG_E ("%p socks5 client resolve [%s]:%d", self, addr, port);
         return -1;
@@ -52,6 +52,7 @@ hev_socks5_client_connect_server (HevSocks5Client *self, const char *addr,
     res = klass->binder (HEV_SOCKS5 (self), fd, sap);
     if (res < 0) {
         LOG_E ("%p socks5 client bind", self);
+        hev_task_del_fd (hev_task_self (), fd);
         close (fd);
         return -1;
     }
@@ -60,11 +61,13 @@ hev_socks5_client_connect_server (HevSocks5Client *self, const char *addr,
                                       self);
     if (res < 0) {
         LOG_E ("%p socks5 client connect", self);
+        hev_task_del_fd (hev_task_self (), fd);
         close (fd);
         return -1;
     }
 
     HEV_SOCKS5 (self)->fd = fd;
+    hev_socks5_set_addr_family (HEV_SOCKS5 (self), addr_family);
     LOG_D ("%p socks5 client connect server fd %d", self, fd);
 
     return 0;
@@ -321,23 +324,6 @@ hev_socks5_client_connect (HevSocks5Client *self, const char *addr, int port)
         LOG_E ("%p socks5 client connect", self);
         return -1;
     }
-
-    return 0;
-}
-
-int
-hev_socks5_client_connect_fd (HevSocks5Client *self, int fd)
-{
-    HevTask *task = hev_task_self ();
-    int res;
-
-    LOG_D ("%p socks5 client connect fd %d", self, fd);
-
-    HEV_SOCKS5 (self)->fd = fd;
-
-    res = hev_task_add_fd (task, fd, POLLIN | POLLOUT);
-    if (res < 0)
-        hev_task_mod_fd (task, fd, POLLIN | POLLOUT);
 
     return 0;
 }
