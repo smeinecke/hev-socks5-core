@@ -15,6 +15,8 @@
 
 #include <hev-object.h>
 
+#include <hev-socks5-proto.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -52,6 +54,10 @@ struct _HevSocks5
     int udp_associated;
     HevSocks5Type type;
     HevSocks5AddrFamily addr_family;
+    HevSocks5DomainAddrType domain_addr_type;
+    HevSocks5Version version;
+
+    void *data;
 };
 
 struct _HevSocks5Class
