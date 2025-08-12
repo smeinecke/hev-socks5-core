@@ -71,6 +71,18 @@ hev_socks5_server_read_auth_method (HevSocks5Server *self)
         return -1;
     }
 
+    if (auth.ver == HEV_SOCKS5_VERSION_4) {
+        // fallback to socks4
+        HEV_SOCKS5 (self)->version = HEV_SOCKS5_VERSION_4;
+        // check if command is connect (method field is 0x01)
+        if (auth.method != 1) {
+            LOG_E ("%p socks5 server auth.method / cd %u", self, auth.method);
+            return -1;
+        }
+        LOG_D("%p socks5 server fallback to socks4", self);
+        return HEV_SOCKS5_AUTH_METHOD_NONE;
+    }
+
     if (auth.ver != HEV_SOCKS5_VERSION_5) {
         LOG_I ("%p socks5 server auth.ver %u", self, auth.ver);
         return -1;
@@ -218,6 +230,10 @@ hev_socks5_server_auth (HevSocks5Server *self)
     int res;
 
     method = hev_socks5_server_read_auth_method (self);
+    if (method == 0 && HEV_SOCKS5 (self)->version == HEV_SOCKS5_VERSION_4) {
+        return 0;
+    }
+
     res = hev_socks5_server_write_auth_method (self, method);
     if (res < 0)
         return -1;
@@ -239,15 +255,63 @@ hev_socks5_server_auth (HevSocks5Server *self)
 }
 
 static int
-hev_socks5_server_read_request (HevSocks5Server *self, int *cmd, int *rep,
-                                struct sockaddr_in6 *addr)
+hev_socks5_server_read_request_socks4 (HevSocks5Server *self, int *cmd, int *rep,
+                                     struct sockaddr_in6 *addr)
 {
-    HevSocks5ReqRes req;
+    HevSocks5ReqRes req = { 0 };
+    int addr_family;
+    int res;
+    char tmp[6] = { 0 };
+
+    LOG_D ("%p socks5 server read socks4 request", self);
+
+    req.cmd = HEV_SOCKS5_REQ_CMD_CONNECT;
+    req.ver = HEV_SOCKS5_VERSION_4;
+    req.addr.atype = HEV_SOCKS5_ADDR_TYPE_IPV4;
+
+    // SOCKSv4 addr is 2 bytes port + 4 bytes ip, SOCKSv5 is 4 bytes ip + 2 bytes port
+    res = hev_task_io_socket_recv (HEV_SOCKS5 (self)->fd, &tmp, 6,
+                                   MSG_WAITALL, task_io_yielder, self);
+    if (res <= 0) {
+        LOG_E ("%p socks5 server read addr ip", self);
+        return -1;
+    }
+
+    addr->sin6_family = AF_INET6;
+    memcpy (&req.addr.ipv4.port, tmp, 2);
+    memcpy (&req.addr.ipv4.addr, tmp + 2, 4);
+
+    // read userid identifier (must be null-terminated)
+    do {
+        res = hev_task_io_socket_recv (HEV_SOCKS5 (self)->fd, &tmp, 1,
+                                     MSG_WAITALL, task_io_yielder, self);
+        if (res <= 0) {
+            LOG_E ("%p socks5 server read userid", self);
+            return -1;
+        }
+    } while (tmp[0] != '\0');
+
+    addr_family = hev_socks5_get_addr_family (HEV_SOCKS5 (self));
+    res = hev_socks5_addr_into_sockaddr6 (&req.addr, addr, &addr_family);
+    if (res < 0) {
+        LOG_E ("%p socks5 server to sockaddr", self);
+        return -1;
+    }
+
+    *cmd = req.cmd;
+    return 0;
+}
+
+static int
+hev_socks5_server_read_request_socks5 (HevSocks5Server *self, int *cmd, int *rep,
+                                     struct sockaddr_in6 *addr)
+{
+    HevSocks5ReqRes req = { 0 };
     int addr_family;
     int addrlen;
     int res;
 
-    LOG_D ("%p socks5 server read request", self);
+    LOG_D ("%p socks5 server read socks5 request", self);
 
     res = hev_task_io_socket_recv (HEV_SOCKS5 (self)->fd, &req, 5, MSG_WAITALL,
                                    task_io_yielder, self);
@@ -295,12 +359,36 @@ hev_socks5_server_read_request (HevSocks5Server *self, int *cmd, int *rep,
     }
     hev_socks5_set_addr_family (HEV_SOCKS5 (self), addr_family);
 
+    *cmd = req.cmd;
+    return 0;
+}
+
+static int
+hev_socks5_server_read_request (HevSocks5Server *self, int *cmd, int *rep,
+                              struct sockaddr_in6 *addr)
+{
+    int res;
+    HevSocks5ReqRes req = { 0 };
+
+    LOG_D ("%p socks5 server read request", self);
+
+    if (HEV_SOCKS5 (self)->version == HEV_SOCKS5_VERSION_4) {
+        res = hev_socks5_server_read_request_socks4(self, cmd, rep, addr);
+    } else {
+        res = hev_socks5_server_read_request_socks5(self, cmd, rep, addr);
+    }
+
+    if (res < 0)
+        return -1;
+    if (res > 0)
+        return 0;
+
     if (LOG_ON ()) {
         const char *type;
         const char *str;
         char buf[272];
 
-        switch (req.cmd) {
+        switch (*cmd) {
         case HEV_SOCKS5_REQ_CMD_CONNECT:
             type = "tcp";
             break;
@@ -317,8 +405,6 @@ hev_socks5_server_read_request (HevSocks5Server *self, int *cmd, int *rep,
         LOG_I ("%p socks5 server %s %s", self, type, str);
     }
 
-    *cmd = req.cmd;
-
     return 0;
 }
 
@@ -330,6 +416,25 @@ hev_socks5_server_write_response (HevSocks5Server *self, int rep,
     int ret;
 
     LOG_D ("%p socks5 server write response", self);
+
+    if (HEV_SOCKS5 (self)->version == HEV_SOCKS5_VERSION_4) {
+        LOG_D ("%p socks5 server write response Socks4", self);
+        char tmp[8] = { 0, 90, 0, 0, 0, 0, 0, 0 };
+        if (rep != HEV_SOCKS5_RES_REP_SUCC) {
+            tmp[1] = 91;
+        }
+        int port = ntohs (addr->sin6_port);
+        memcpy (tmp + 2, &port, 2);
+        memcpy (tmp + 4, &addr->sin6_addr.s6_addr[12], 4);
+
+        ret = hev_task_io_socket_send (HEV_SOCKS5 (self)->fd, tmp, 8,
+                                       MSG_WAITALL, task_io_yielder, self);
+        if (ret <= 0) {
+            LOG_E ("%p socks5 server write response", self);
+            return -1;
+        }
+        return 0;
+    }
 
     res.ver = HEV_SOCKS5_VERSION_5;
     res.rep = rep;
@@ -498,6 +603,7 @@ hev_socks5_server_handshake (HevSocks5Server *self)
         switch (cmd) {
         case HEV_SOCKS5_REQ_CMD_CONNECT:
             res = hev_socks5_server_connect (self, &addr);
+            LOG_D("%p socks5 server connect: %d", self, res);
             if (res < 0)
                 rep = HEV_SOCKS5_RES_REP_HOST;
             HEV_SOCKS5 (self)->type = HEV_SOCKS5_TYPE_TCP;
@@ -521,8 +627,11 @@ hev_socks5_server_handshake (HevSocks5Server *self)
     }
 
     res = hev_socks5_server_write_response (self, rep, &addr);
-    if ((res < 0) || (rep != HEV_SOCKS5_RES_REP_SUCC))
+    if ((res < 0) || (rep != HEV_SOCKS5_RES_REP_SUCC)) {
+        LOG_E ("%p fail %u", self, rep);
         return -1;
+
+    }
 
     return 0;
 }
