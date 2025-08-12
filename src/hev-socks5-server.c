@@ -271,7 +271,6 @@ hev_socks5_server_read_request (HevSocks5Server *self, int *cmd, int *rep,
 
     LOG_D ("%p socks5 server read request", self);
 
-<<<<<<< HEAD
     if (HEV_SOCKS5 (self)->version == HEV_SOCKS5_VERSION_4) {
         req.cmd = HEV_SOCKS5_REQ_CMD_CONNECT;
         req.ver = HEV_SOCKS5_VERSION_4;
@@ -306,7 +305,7 @@ hev_socks5_server_read_request (HevSocks5Server *self, int *cmd, int *rep,
             LOG_E ("%p socks5 server to sockaddr", self);
             return -1;
         }
-        
+
         // Set address family for SOCKS4
         HevSocks5AddrFamily addr_family = HEV_SOCKS5_ADDR_FAMILY_IPV4;
         hev_socks5_set_addr_family(HEV_SOCKS5(self), addr_family);
@@ -349,7 +348,7 @@ hev_socks5_server_read_request (HevSocks5Server *self, int *cmd, int *rep,
                 return 0;
             }
             req.addr.domain.len = len;
-            
+
             // Then read the domain name
             res = hev_task_io_socket_recv(HEV_SOCKS5(self)->fd, req.addr.domain.addr,
                                         len + 2, MSG_WAITALL, task_io_yielder, self);
@@ -383,7 +382,6 @@ hev_socks5_server_read_request (HevSocks5Server *self, int *cmd, int *rep,
         *rep = HEV_SOCKS5_RES_REP_ADDR;
         LOG_E ("%p socks5 server read addr", self);
         return 0;
->>>>>>> upstream/main
     }
 
     addr_family = hev_socks5_get_addr_family (HEV_SOCKS5 (self));
