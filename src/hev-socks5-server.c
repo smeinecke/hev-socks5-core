@@ -261,107 +261,141 @@ hev_socks5_server_auth (HevSocks5Server *self)
 }
 
 static int
-hev_socks5_server_read_request (HevSocks5Server *self, int *cmd, int *rep,
-                                struct sockaddr_in6 *addr)
+hev_socks5_server_read_request_socks4 (HevSocks5Server *self, int *cmd, int *rep,
+                                     struct sockaddr_in6 *addr)
 {
-    HevSocks5ReqRes req;
+    HevSocks5ReqRes req = { 0 };
+    int addr_family;
+    int res;
+    char tmp[6] = { 0 };
+
+    LOG_D ("%p socks5 server read socks4 request", self);
+
+    req.cmd = HEV_SOCKS5_REQ_CMD_CONNECT;
+    req.ver = HEV_SOCKS5_VERSION_4;
+    req.addr.atype = HEV_SOCKS5_ADDR_TYPE_IPV4;
+
+    // SOCKSv4 addr is 2 bytes port + 4 bytes ip, SOCKSv5 is 4 bytes ip + 2 bytes port
+    res = hev_task_io_socket_recv (HEV_SOCKS5 (self)->fd, &tmp, 6,
+                                   MSG_WAITALL, task_io_yielder, self);
+    if (res <= 0) {
+        LOG_E ("%p socks5 server read addr ip", self);
+        return -1;
+    }
+
+    addr->sin6_family = AF_INET6;
+    memcpy (&req.addr.ipv4.port, tmp, 2);
+    memcpy (&req.addr.ipv4.addr, tmp + 2, 4);
+
+    // read userid identifier (must be null-terminated)
+    do {
+        res = hev_task_io_socket_recv (HEV_SOCKS5 (self)->fd, &tmp, 1,
+                                     MSG_WAITALL, task_io_yielder, self);
+        if (res <= 0) {
+            LOG_E ("%p socks5 server read userid", self);
+            return -1;
+        }
+    } while (tmp[0] != '\0');
+
+    addr_family = hev_socks5_get_addr_family (HEV_SOCKS5 (self));
+    res = hev_socks5_addr_into_sockaddr6 (&req.addr, addr, &addr_family);
+    if (res < 0) {
+        LOG_E ("%p socks5 server to sockaddr", self);
+        return -1;
+    }
+
+    *cmd = req.cmd;
+    return 0;
+}
+
+static int
+hev_socks5_server_read_request_socks5 (HevSocks5Server *self, int *cmd, int *rep,
+                                     struct sockaddr_in6 *addr)
+{
+    HevSocks5ReqRes req = { 0 };
     int addr_family;
     int addrlen;
     int res;
 
+    LOG_D ("%p socks5 server read socks5 request", self);
+
+    res = hev_task_io_socket_recv (HEV_SOCKS5 (self)->fd, &req, 5,
+                                   MSG_WAITALL, task_io_yielder, self);
+    if (res <= 0) {
+        LOG_E ("%p socks5 server read request", self);
+        return -1;
+    }
+
+    if (req.ver != HEV_SOCKS5_VERSION_5) {
+        *rep = HEV_SOCKS5_RES_REP_FAIL;
+        LOG_E ("%p socks5 server req.ver %u", self, req.ver);
+        return 0;
+    }
+
+    switch (req.addr.atype) {
+    case HEV_SOCKS5_ADDR_TYPE_IPV4:
+        addrlen = 5;
+        break;
+    case HEV_SOCKS5_ADDR_TYPE_IPV6:
+        addrlen = 17;
+        break;
+    case HEV_SOCKS5_ADDR_TYPE_NAME:
+        addrlen = 2 + req.addr.domain.len;
+        break;
+    default:
+        *rep = HEV_SOCKS5_RES_REP_ADDR;
+        LOG_E ("%p socks5 server req.atype %u", self, req.addr.atype);
+        return 0;
+    }
+
+    res = hev_task_io_socket_recv (HEV_SOCKS5 (self)->fd,
+                                   req.addr.domain.addr, addrlen,
+                                   MSG_WAITALL, task_io_yielder, self);
+    if (res <= 0) {
+        *rep = HEV_SOCKS5_RES_REP_ADDR;
+        LOG_E ("%p socks5 server read addr", self);
+        return 0;
+    }
+
+    addr_family = hev_socks5_get_addr_family (HEV_SOCKS5 (self));
+    res = hev_socks5_addr_into_sockaddr6 (&req.addr, addr, &addr_family);
+    if (res < 0) {
+        *rep = HEV_SOCKS5_RES_REP_ADDR;
+        LOG_I ("%p socks5 server resolve addr", self);
+        return 0;
+    }
+    hev_socks5_set_addr_family (HEV_SOCKS5 (self), addr_family);
+
+    *cmd = req.cmd;
+    return 0;
+}
+
+static int
+hev_socks5_server_read_request (HevSocks5Server *self, int *cmd, int *rep,
+                              struct sockaddr_in6 *addr)
+{
+    int res;
+    HevSocks5ReqRes req = { 0 };
+
     LOG_D ("%p socks5 server read request", self);
 
     if (HEV_SOCKS5 (self)->version == HEV_SOCKS5_VERSION_4) {
-        req.cmd = HEV_SOCKS5_REQ_CMD_CONNECT;
-        req.ver = HEV_SOCKS5_VERSION_4;
-        req.addr.atype = HEV_SOCKS5_ADDR_TYPE_IPV4;
-
-        // SOCKSv4 addr is 2 bytes port + 4 bytes ip, SOCKSv5 is 4 bytes ip + 2 bytes port
-        char tmp[6] = { 0, 0, 0, 0, 0, 0 };
-        res = hev_task_io_socket_recv (HEV_SOCKS5 (self)->fd, &tmp, 6,
-                                       MSG_WAITALL, task_io_yielder, self);
-        if (res <= 0) {
-            LOG_E ("%p socks5 server read addr ip", self);
-            return -1;
-        }
-
-        addr->sin6_family = AF_INET6;
-
-        memcpy (&req.addr.ipv4.port, tmp, 2);
-        memcpy (&req.addr.ipv4.addr, tmp + 2, 4);
-
-        // read userid identifier
-        res = hev_task_io_socket_recv (HEV_SOCKS5 (self)->fd, &tmp, 1,
-                                       MSG_WAITALL, task_io_yielder, self);
-
-        if (tmp[0] != 0) {
-            LOG_E ("%p socks5 server read userid", self);
-            return -1;
-        }
-
-        addr_family = hev_socks5_get_addr_family (HEV_SOCKS5 (self));
-        res = hev_socks5_addr_into_sockaddr6 (&req.addr, addr, &addr_family);
-        if (res < 0) {
-            LOG_E ("%p socks5 server to sockaddr", self);
-            return -1;
-        }
+        res = hev_socks5_server_read_request_socks4(self, cmd, rep, addr);
     } else {
-        res = hev_task_io_socket_recv (HEV_SOCKS5 (self)->fd, &req, 5,
-                                       MSG_WAITALL, task_io_yielder, self);
-
-        if (res <= 0) {
-            LOG_E ("%p socks5 server read request", self);
-            return -1;
-        }
-
-        if (req.ver != HEV_SOCKS5_VERSION_5) {
-            *rep = HEV_SOCKS5_RES_REP_FAIL;
-            LOG_E ("%p socks5 server req.ver %u", self, req.ver);
-            return 0;
-        }
-
-        switch (req.addr.atype) {
-        case HEV_SOCKS5_ADDR_TYPE_IPV4:
-            addrlen = 5;
-            break;
-        case HEV_SOCKS5_ADDR_TYPE_IPV6:
-            addrlen = 17;
-            break;
-        case HEV_SOCKS5_ADDR_TYPE_NAME:
-            addrlen = 2 + req.addr.domain.len;
-            break;
-        default:
-            *rep = HEV_SOCKS5_RES_REP_ADDR;
-            LOG_E ("%p socks5 server req.atype %u", self, req.addr.atype);
-            return 0;
-        }
-
-        res = hev_task_io_socket_recv (HEV_SOCKS5 (self)->fd,
-                                       req.addr.domain.addr, addrlen,
-                                       MSG_WAITALL, task_io_yielder, self);
-        if (res <= 0) {
-            *rep = HEV_SOCKS5_RES_REP_ADDR;
-            LOG_E ("%p socks5 server read addr", self);
-            return 0;
-        }
-
-        addr_family = hev_socks5_get_addr_family (HEV_SOCKS5 (self));
-        res = hev_socks5_addr_into_sockaddr6 (&req.addr, addr, &addr_family);
-        if (res < 0) {
-            *rep = HEV_SOCKS5_RES_REP_ADDR;
-            LOG_I ("%p socks5 server resolve addr", self);
-            return 0;
-        }
-        hev_socks5_set_addr_family (HEV_SOCKS5 (self), addr_family);
+        res = hev_socks5_server_read_request_socks5(self, cmd, rep, addr);
     }
 
+    if (res < 0)
+        return -1;
+    if (res > 0)
+        return 0;
 
     if (LOG_ON ()) {
         const char *type;
         const char *str;
         char buf[272];
 
-        switch (req.cmd) {
+        switch (*cmd) {
         case HEV_SOCKS5_REQ_CMD_CONNECT:
             type = "tcp";
             break;
@@ -377,8 +411,6 @@ hev_socks5_server_read_request (HevSocks5Server *self, int *cmd, int *rep,
         str = hev_socks5_addr_into_str (&req.addr, buf, sizeof (buf));
         LOG_I ("%p socks5 server %s %s", self, type, str);
     }
-
-    *cmd = req.cmd;
 
     return 0;
 }
