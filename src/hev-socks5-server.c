@@ -300,14 +300,20 @@ hev_socks5_server_read_request (HevSocks5Server *self, int *cmd, int *rep,
             return -1;
         }
 
-        res = hev_socks5_addr_to_sockaddr (&req.addr, saddr);
+        // Convert SOCKS4 address to sockaddr_in6
+        struct sockaddr_in6 saddr6;
+        int addr_family;
+        
+        res = hev_socks5_addr_into_sockaddr6(&req.addr, &saddr6, &addr_family);
         if (res < 0) {
-            LOG_E ("%p socks5 server to sockaddr", self);
+            LOG_E("%p socks5 server to sockaddr", self);
             return -1;
         }
-
+        
+        // Copy the converted address to the output parameter
+        memcpy(saddr, &saddr6, sizeof(saddr6));
+        
         // Set address family for SOCKS4
-        HevSocks5AddrFamily addr_family = HEV_SOCKS5_ADDR_FAMILY_IPV4;
         hev_socks5_set_addr_family(HEV_SOCKS5(self), addr_family);
     } else {
         // Handle SOCKS5 request
@@ -364,11 +370,18 @@ hev_socks5_server_read_request (HevSocks5Server *self, int *cmd, int *rep,
             LOG_E("%p socks5 server req.atype %u", self, req.addr.atype);
             return 0;
         }
+    }
+
+    // Calculate address length based on address type
+    switch (req.addr.atype) {
+    case HEV_SOCKS5_ADDR_TYPE_IPV4:
+        addrlen = 5;  // 4 bytes IP + 2 bytes port - 1 (atype already read)
+        break;
     case HEV_SOCKS5_ADDR_TYPE_IPV6:
-        addrlen = 17;
+        addrlen = 17; // 16 bytes IP + 2 bytes port - 1 (atype already read)
         break;
     case HEV_SOCKS5_ADDR_TYPE_NAME:
-        addrlen = 2 + req.addr.domain.len;
+        addrlen = 2 + req.addr.domain.len; // 1 byte len + domain + 2 bytes port
         break;
     default:
         *rep = HEV_SOCKS5_RES_REP_ADDR;

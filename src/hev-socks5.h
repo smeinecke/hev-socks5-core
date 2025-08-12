@@ -55,7 +55,6 @@ struct _HevSocks5
     HevSocks5Type type;
     HevSocks5AddrFamily addr_family;
     HevSocks5Version version;
-    HevSocks5DomainAddrType domain_addr_type;
     void *data;
 };
 
