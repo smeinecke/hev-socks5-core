@@ -388,14 +388,14 @@ hev_socks5_server_write_response (HevSocks5Server *self, int rep,
     LOG_D ("%p socks5 server write response", self);
 
     if (HEV_SOCKS5 (self)->version == HEV_SOCKS5_VERSION_4) {
-            LOG_D ("%p socks5 server write response Socks4", self);
+        LOG_D ("%p socks5 server write response Socks4", self);
         char tmp[8] = { 0, 90, 0, 0, 0, 0, 0, 0 };
         if (rep != HEV_SOCKS5_RES_REP_SUCC) {
             tmp[1] = 91;
         }
         int port = ntohs (addr->sin6_port);
         memcpy (tmp + 2, &port, 2);
-        memcpy (tmp + 4, &addr->sin6_addr+12, 4);
+        memcpy (tmp + 4, &addr->sin6_addr.s6_addr[12], 4);
 
         ret = hev_task_io_socket_send (HEV_SOCKS5 (self)->fd, tmp, 8,
                                        MSG_WAITALL, task_io_yielder, self);
