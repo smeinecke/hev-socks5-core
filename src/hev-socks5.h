@@ -54,7 +54,6 @@ struct _HevSocks5
     int udp_associated;
     HevSocks5Type type;
     HevSocks5AddrFamily addr_family;
-    HevSocks5DomainAddrType domain_addr_type;
     HevSocks5Version version;
 
     void *data;
