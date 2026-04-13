@@ -23,6 +23,34 @@
 
 #define task_io_yielder hev_socks5_task_io_yielder
 
+static const char *
+hev_socks5_res_rep_to_str (int rep)
+{
+    switch (rep) {
+    case HEV_SOCKS5_RES_REP_SUCC:
+        return "success";
+    case HEV_SOCKS5_RES_REP_FAIL:
+        return "general failure";
+    case HEV_SOCKS5_RES_REP_HOST:
+        return "host unreachable";
+    case HEV_SOCKS5_RES_REP_IMPL:
+        return "command not implemented";
+    case HEV_SOCKS5_RES_REP_ADDR:
+        return "address type not supported";
+    default:
+        return "unknown error";
+    }
+}
+
+static const char *
+hev_socks5_sockaddr6_to_str (struct sockaddr_in6 *addr, char *buf, int len)
+{
+    HevSocks5Addr haddr;
+    if (hev_socks5_addr_from_sockaddr6 (&haddr, addr) < 0)
+        return "invalid";
+    return hev_socks5_addr_into_str (&haddr, buf, len);
+}
+
 HevSocks5Server *
 hev_socks5_server_new (int fd)
 {
@@ -458,19 +486,23 @@ hev_socks5_server_connect (HevSocks5Server *self, struct sockaddr_in6 *addr)
     int timeout;
     int res;
     int fd;
+    char addr_buf[272];
+    const char *addr_str;
 
-    LOG_D ("%p socks5 server connect", self);
+    addr_str = hev_socks5_sockaddr6_to_str (addr, addr_buf, sizeof (addr_buf));
+
+    LOG_D ("%p socks5 server connect to %s", self, addr_str);
 
     fd = hev_socks5_socket (SOCK_STREAM);
     if (fd < 0) {
-        LOG_E ("%p socks5 server socket stream", self);
+        LOG_E ("%p socks5 server socket stream for %s", self, addr_str);
         return -1;
     }
 
     klass = HEV_OBJECT_GET_CLASS (self);
     res = klass->binder (HEV_SOCKS5 (self), fd, (struct sockaddr *)addr);
     if (res < 0) {
-        LOG_W ("%p socks5 server bind", self);
+        LOG_W ("%p socks5 server bind to %s", self, addr_str);
         hev_task_del_fd (hev_task_self (), fd);
         close (fd);
         return -1;
@@ -482,7 +514,7 @@ hev_socks5_server_connect (HevSocks5Server *self, struct sockaddr_in6 *addr)
     res = hev_task_io_socket_connect (fd, (struct sockaddr *)addr,
                                       sizeof (*addr), task_io_yielder, self);
     if (res < 0) {
-        LOG_I ("%p socks5 server connect", self);
+        LOG_I ("%p socks5 server connect to %s", self, addr_str);
         hev_task_del_fd (hev_task_self (), fd);
         close (fd);
         return -1;
@@ -581,7 +613,7 @@ hev_socks5_server_handshake (HevSocks5Server *self)
 {
     struct sockaddr_in6 addr;
     int timeout;
-    int cmd;
+    int cmd = 0;
     int rep;
     int res;
 
@@ -628,7 +660,11 @@ hev_socks5_server_handshake (HevSocks5Server *self)
 
     res = hev_socks5_server_write_response (self, rep, &addr);
     if ((res < 0) || (rep != HEV_SOCKS5_RES_REP_SUCC)) {
-        LOG_E ("%p fail %u", self, rep);
+        char addr_buf[272];
+        const char *addr_str =
+            hev_socks5_sockaddr6_to_str (&addr, addr_buf, sizeof (addr_buf));
+        LOG_E ("%p fail: %s to %s", self, hev_socks5_res_rep_to_str (rep),
+               addr_str);
         return -1;
     }
 
