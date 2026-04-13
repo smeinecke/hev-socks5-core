@@ -254,7 +254,7 @@ hev_socks5_client_read_response (HevSocks5Client *self)
     klass = HEV_OBJECT_GET_CLASS (self);
     ret = klass->set_upstream_addr (self, &res.addr);
     if (ret < 0) {
-        LOG_W ("%p socks5 client set upstream addr", self);
+        LOG_W ("%p socks5 client failed to set upstream address", self);
         return -1;
     }
 
@@ -285,7 +285,7 @@ hev_socks5_client_connect (HevSocks5Client *self, const char *addr, int port)
 
     fd = hev_socks5_socket (SOCK_STREAM);
     if (fd < 0) {
-        LOG_E ("%p socks5 client socket", self);
+        LOG_E ("%p socks5 client failed to create TCP socket", self);
         return -1;
     }
 
@@ -293,7 +293,7 @@ hev_socks5_client_connect (HevSocks5Client *self, const char *addr, int port)
     klass = HEV_OBJECT_GET_CLASS (self);
     res = klass->binder (HEV_SOCKS5 (self), fd, sap);
     if (res < 0) {
-        LOG_W ("%p socks5 client bind", self);
+        LOG_W ("%p socks5 client failed to bind TCP socket", self);
         hev_task_del_fd (hev_task_self (), fd);
         close (fd);
         return -1;

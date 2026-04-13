@@ -104,7 +104,9 @@ hev_socks5_server_read_auth_method (HevSocks5Server *self)
         HEV_SOCKS5 (self)->version = HEV_SOCKS5_VERSION_4;
         // check if command is connect (method field is 0x01)
         if (auth.method != 1) {
-            LOG_E ("%p socks5 server auth.method / cd %u", self, auth.method);
+            LOG_E (
+                "%p socks5 server socks4 invalid command %u (expected CONNECT)",
+                self, auth.method);
             return -1;
         }
         LOG_D ("%p socks5 server fallback to socks4", self);
@@ -301,7 +303,7 @@ hev_socks5_server_read_request_socks4 (HevSocks5Server *self, int *cmd,
     res = hev_task_io_socket_recv (HEV_SOCKS5 (self)->fd, &tmp, 6, MSG_WAITALL,
                                    task_io_yielder, self);
     if (res <= 0) {
-        LOG_E ("%p socks5 server read addr ip", self);
+        LOG_E ("%p socks5 server failed to read socks4 address", self);
         return -1;
     }
 
@@ -322,7 +324,7 @@ hev_socks5_server_read_request_socks4 (HevSocks5Server *self, int *cmd,
     addr_family = hev_socks5_get_addr_family (HEV_SOCKS5 (self));
     res = hev_socks5_addr_into_sockaddr6 (&req.addr, addr, &addr_family);
     if (res < 0) {
-        LOG_E ("%p socks5 server to sockaddr", self);
+        LOG_E ("%p socks5 server failed to convert address to sockaddr", self);
         return -1;
     }
 
@@ -458,7 +460,7 @@ hev_socks5_server_write_response (HevSocks5Server *self, int rep,
         ret = hev_task_io_socket_send (HEV_SOCKS5 (self)->fd, tmp, 8,
                                        MSG_WAITALL, task_io_yielder, self);
         if (ret <= 0) {
-            LOG_E ("%p socks5 server write response", self);
+            LOG_E ("%p socks5 server failed to write socks4 response", self);
             return -1;
         }
         return 0;
@@ -540,7 +542,7 @@ hev_socks5_server_bind (HevSocks5Server *self, struct sockaddr_in6 *addr)
 
     fd = hev_socks5_socket (SOCK_DGRAM);
     if (fd < 0) {
-        LOG_E ("%p socks5 server socket dgram", self);
+        LOG_E ("%p socks5 server failed to create UDP socket", self);
         return -1;
     }
 
@@ -551,13 +553,13 @@ hev_socks5_server_bind (HevSocks5Server *self, struct sockaddr_in6 *addr)
 
     fd = hev_socks5_socket (SOCK_DGRAM);
     if (fd < 0) {
-        LOG_E ("%p socks5 server socket dgram", self);
+        LOG_E ("%p socks5 server failed to create UDP socket", self);
         return -1;
     }
 
     res = setsockopt (fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof (one));
     if (res < 0) {
-        LOG_W ("%p socks5 server socket reuse", self);
+        LOG_W ("%p socks5 server failed to set SO_REUSEADDR", self);
         hev_task_del_fd (hev_task_self (), fd);
         close (fd);
         return -1;
@@ -565,7 +567,7 @@ hev_socks5_server_bind (HevSocks5Server *self, struct sockaddr_in6 *addr)
 
     res = sskptr->binder (self, fd, addr);
     if (res < 0) {
-        LOG_W ("%p socks5 server bind", self);
+        LOG_W ("%p socks5 server failed to bind UDP socket", self);
         hev_task_del_fd (hev_task_self (), fd);
         close (fd);
         return -1;
@@ -588,20 +590,20 @@ hev_socks5_server_udp_bind (HevSocks5Server *self, int sock,
     alen = sizeof (struct sockaddr_in6);
     res = getsockname (HEV_SOCKS5 (self)->fd, (struct sockaddr *)src, &alen);
     if (res < 0) {
-        LOG_W ("%p socks5 server tcp socket name", self);
+        LOG_W ("%p socks5 server failed to get TCP socket name", self);
         return -1;
     }
 
     src->sin6_port = 0;
     res = bind (sock, (struct sockaddr *)src, alen);
     if (res < 0) {
-        LOG_W ("%p socks5 server socket bind", self);
+        LOG_W ("%p socks5 server failed to bind UDP relay socket", self);
         return -1;
     }
 
     res = getsockname (sock, (struct sockaddr *)src, &alen);
     if (res < 0) {
-        LOG_W ("%p socks5 server udp socket name", self);
+        LOG_W ("%p socks5 server failed to get UDP socket name", self);
         return -1;
     }
 
